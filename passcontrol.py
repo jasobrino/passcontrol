@@ -8,13 +8,13 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.edge import service
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers import base as sched_base
 #from plyer import notification
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
 
 main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
-sched_run = False #estado de la cola
 sched_seconds = 10 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
 
@@ -76,7 +76,7 @@ def get_items():
                         n_nombre = "remitente"
                     case "Fecha de creación":
                         n_nombre = "fecha"
-                campos[n_nombre] = e.find_element(By.CSS_SELECTOR, ".ng-scope .{}".format(c["campo"])).text
+                campos[n_nombre] = e.find_element(By.CSS_SELECTOR, ".ng-scope .{}".format(c["campo"])).text.strip()
             #print("campos: %s" % campos)
             items.append(campos)
     except Exception as ex:
@@ -111,9 +111,7 @@ def comprobar_tickets():
 
 def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
-    global sched_run
     sched.add_job(main_loop, 'interval', seconds=seconds, id='job_id')
-    sched_run = True
     sched.start()
  
 # funciones para tray icon
@@ -133,26 +131,22 @@ def get_state_sched(sta):
     return inner
 
 def tray_sched(icon, item):
-    global sched_run
-    if( not sched_run ):
+    print("sched state: %s" % sched.state)
+    if( sched.state != sched_base.STATE_RUNNING ):
         print("arrancamos job")
         sched.resume()
-        sched_run = True
-        icon.notify(message="estado actual: arrancado")
+        icon.notify(message="estado actual: funcionando")
     else:
-        print("paramos sched")
-        sched_run = False
+        print("paramos scheduler")
         sched.pause()
-        icon.notify(message="estado actual: parado")
+        icon.notify(message="estado actual: pausado")
 
-
-# def tray_start_sched(seconds):
-#     start_scheduler(seconds)
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
-    #if sched_run:
-    sched.shutdown()
+    if sched.running:
+        print("quit: paramos scheduler")
+        sched.shutdown()
     driver.close()
     icon.stop()
 
@@ -177,7 +171,8 @@ if __name__ == "__main__":
     #definimos icono para la bandeja del sistema
     image = PIL.Image.open(current_dir+"\\logo_pass32.ico")
     icon = pyIcon('pass menu', image, 'tickets pass', menu=pyMenu(
-        pyItem('parar', tray_sched, checked=lambda item: not sched_run),
+        #pyItem('parar', tray_sched, checked=lambda item: not sched.running),
+        pyItem('parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
         pyItem('tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
@@ -205,4 +200,4 @@ if __name__ == "__main__":
     #run_program = True
     #arranca el loop principal
     icon.run()
-    sys.exit(0)
+    #sys.exit(0)
