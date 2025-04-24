@@ -17,6 +17,7 @@ main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
 sched_seconds = 10 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
+tickets_solo_inss = True
 
 def get_default_options():
     """activa las opciones por defecto"""
@@ -60,7 +61,6 @@ def get_items():
             indice_col  = [ x for x in hd_class.split(" ") if "colt" in x[0:4] ][0]
             cabeceras.append({ "nombre": nombre_col, "campo": indice_col })
         #print("cabeceras: %s" % cabeceras)
-
         contador = 0
         #filas de tickets- buscamos los campos segun el indice de las cabeceras
         for e in vp_items:
@@ -68,14 +68,16 @@ def get_items():
             campos = {}
             for c in cabeceras:
                 campos["fila"] = contador
-                n_nombre = c["nombre"]
+                n_nombre = c["nombre"].lower()
                 match n_nombre:
-                    case "Mostrar ID":
+                    case "mostrar id":
                         n_nombre = "Id"
-                    case "Remitente":
-                        n_nombre = "remitente"
-                    case "Fecha de creación":
+                    case "fecha de creación":
                         n_nombre = "fecha"
+                    case "nombre completo de cliente":
+                        n_nombre = "nombre"
+                    case "fecha de última modificación":
+                        n_nombre = "fecha_mod"
                 campos[n_nombre] = e.find_element(By.CSS_SELECTOR, ".ng-scope .{}".format(c["campo"])).text.strip()
             #print("campos: %s" % campos)
             items.append(campos)
@@ -131,16 +133,27 @@ def get_state_sched(sta):
     return inner
 
 def tray_sched(icon, item):
-    print("sched state: %s" % sched.state)
-    if( sched.state != sched_base.STATE_RUNNING ):
-        print("arrancamos job")
-        sched.resume()
-        icon.notify(message="estado actual: funcionando")
-    else:
-        print("paramos scheduler")
-        sched.pause()
-        icon.notify(message="estado actual: pausado")
-
+    global tickets_solo_inss
+    print("tray_item: (%s)" % item)
+    match item.text:
+        case "parar":
+            print("sched state: %s" % sched.state)
+            if( sched.state != sched_base.STATE_RUNNING ):
+                print("arrancamos job")
+                sched.resume()
+                icon.notify(message="estado actual: funcionando")
+            else:
+                print("paramos scheduler")
+                sched.pause()
+                icon.notify(message="estado actual: pausado")
+        case "solo INSS":
+            tickets_solo_inss = not tickets_solo_inss
+            print("tickets_solo_inss: %s" % tickets_solo_inss)
+            if tickets_solo_inss:
+                icon.notify(message="mostrar tickets INSS")
+            else:
+                icon.notify(message="mostrar todos tickets")
+                
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
@@ -155,13 +168,25 @@ def tray_quit(icon):
 def main_loop():
     '''se encarga de comprobar regularmente si hay que notificar nuevos tickets'''
     nuevos = comprobar_tickets()
-    if( len(nuevos) > 0 ):
+    def ticket_formato(tit, mess):
+        return "{}: {}\n".format(tit, mess)
+    if len(nuevos) > 0:
         print("tickets nuevos: %s" % list(map(lambda i: i['Id'], nuevos)))
         rel = ""
+        rel_inss = ""
+        nuevos_inss = 0
         for nt in nuevos:
-            rel += "%s: %s\n" % (nt['Id'], nt['remitente'])
-        #ver_notif(rel)
-        icon.notify(title='nuevos tickets!', message=rel)
+            rel += ticket_formato(nt['Id'], nt['remitente'])
+            #comprobamos si pertenece al inss
+            if (nt["empresa"] in ["INSS","GISS"]) or (nt["empresa"]=="SJSS" and nt["remitente"][2:3] == 'I'):
+                nuevos_inss += 1
+                rel_inss += ticket_formato(nt['Id'], nt['remitente'])
+        print("tickets inss(%d): %s" % (nuevos_inss, rel_inss))
+        if tickets_solo_inss:
+            if nuevos_inss > 0:
+                icon.notify(title='nuevos tickets inss!', message=rel_inss)
+        else:
+            icon.notify(title='nuevos tickets!', message=rel)
     else:
         print("no hay nuevos tickets")
     driver.refresh()
@@ -170,9 +195,10 @@ def main_loop():
 if __name__ == "__main__":
     #definimos icono para la bandeja del sistema
     image = PIL.Image.open(current_dir+"\\logo_pass32.ico")
-    icon = pyIcon('pass menu', image, 'tickets pass', menu=pyMenu(
+    icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
         #pyItem('parar', tray_sched, checked=lambda item: not sched.running),
         pyItem('parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
+        pyItem('solo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
         pyItem('tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
@@ -193,6 +219,7 @@ if __name__ == "__main__":
     driver.get(main_url)
 
     print("titulo ventana principal: %s" % driver.title)
+    #driver.execute_script("window.open('{}');".format(main_url))
     #arrancamos la cola
     sched = BackgroundScheduler()
     start_scheduler(sched_seconds)
