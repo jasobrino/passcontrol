@@ -1,7 +1,7 @@
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
-#python -m PyInstaller sample.py --onefile --noconsole archivo.py
-import os, subprocess, io, base64
+#python -m PyInstaller --onefile --noconsole passcontrol.py
+import os, sys, subprocess, io, base64
 # import tkinter as tk
 # import tkinter.scrolledtext as st
 from selenium import webdriver
@@ -21,7 +21,7 @@ main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
 sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
-tickets_solo_inss = False
+tickets_solo_inss = True
 
 def get_default_options():
     '''activa las opciones por defecto'''
@@ -205,6 +205,14 @@ def main_loop():
     #importante ajustar el zoom para que entren todas las columnas
     driver.execute_script("document.body.style.zoom='20%'")
 
+def check_run_program():
+    '''comprobar si el programa esta corriendo'''
+    progs= [line.split() for line in subprocess.check_output("tasklist").splitlines()]
+    #eliminar las lineas de cabecera
+    cab=[progs.pop(e) for e in [0,1,2]]
+    n_instancias = len([ x[0] for x in progs if x[0] == b'passcontrol.exe' ])
+    print("instancias: %d" % n_instancias)
+    return n_instancias > 2
 
 # def tkMsg(title, mesg):
 #     tkroot= tk.Tk()
@@ -222,6 +230,10 @@ def main_loop():
 #     tkroot.mainloop()
 
 if __name__ == "__main__":
+    #comprobamos si el programa ya está corriendo
+    if check_run_program():
+        print("passcontrol ya está ejecutándose")
+        sys.exit(0)
     #creamos la imagen desde el codigo base64
     buffer = io.BytesIO(base64.b64decode(pass_icon))
     image = PIL.Image.open(buffer)
