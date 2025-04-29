@@ -1,6 +1,9 @@
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
-import os, sys
+#python -m PyInstaller sample.py --onefile --noconsole archivo.py
+import os, subprocess, io, base64
+# import tkinter as tk
+# import tkinter.scrolledtext as st
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -12,15 +15,16 @@ from apscheduler.schedulers import base as sched_base
 #from plyer import notification
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
+from passIcon import pass_icon
 
 main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
-sched_seconds = 10 #intervalo scheduler
+sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
-tickets_solo_inss = True
+tickets_solo_inss = False
 
 def get_default_options():
-    """activa las opciones por defecto"""
+    '''activa las opciones por defecto'''
     os.environ.pop('HTTP_PROXY', None)
     os.environ.pop('HTTPS_PROXY', None)
     opt = webdriver.EdgeOptions() #Options()
@@ -30,16 +34,19 @@ def get_default_options():
     #options.add_experimental_option("excludeSwitches", ['enable-logging'])
     #options.ignore_local_proxy_environment_variables() #deprecated
     opt.add_argument("--no-sandbox")
-    opt.add_argument("--log-level=3")
-    opt.add_argument("--headless")
-    opt.add_argument("start-maximized")
+    opt.add_argument("--disable-gpu")
+    opt.add_argument('--disable-dev-shm-usage')
+    #opt.add_argument("--user-data-dir=C:\\temp\\edge_data")
+    #opt.add_argument("--log-level=3")
+    opt.add_argument("--headless") #ventana oculta
+    opt.add_argument("start-maximixed")
     return opt
 
 #espera a que un elemento se encuentre cargado y lo devuelve
 def wait_element(selector, patron):
     '''espera a que el elemento indicado se haya cargado'''
-    wait = WebDriverWait(driver, timeout=15, poll_frequency=.2)
-    wait.until(EC.visibility_of_element_located((selector, patron)))
+    wait = WebDriverWait(driver, timeout=20, poll_frequency=.2)
+    wait.until(EC.presence_of_element_located((selector, patron)))
     return driver.find_element(selector, patron)
 
 #captura las filas de items y guarda los valores
@@ -48,16 +55,20 @@ def get_items():
     items = []
     #en caso de que no existan tickets, se producirá una excepcion
     try:
-        #viewPort = wait_element(By.CSS_SELECTOR, '.ngViewport .ng-scope')
-        vp_header = wait_element(By.CLASS_NAME, "ngHeaderContainer")
+        print("entrando en get_items")
+        viewPort = wait_element(By.CSS_SELECTOR, '.ngViewport .ng-scope')
+        #vp_header = wait_element(By.CLASS_NAME, "ngHeaderScroller")
+        vp_header = driver.find_element(By.CLASS_NAME, "ngHeaderScroller")
+        #vp_header = wait_element(By.CLASS_NAME, "ngHeaderContainer")
+        vp_header_items = vp_header.find_elements(By.CSS_SELECTOR, ".ngHeaderSortColumn > .ngHeaderText")
+        print("vp_header_items count: %d" % len(vp_header_items))
         viewPort  = driver.find_element(By.CLASS_NAME, "ngViewport")
-        vp_header_items = vp_header.find_elements(By.CSS_SELECTOR, ".ngHeaderText")
         vp_items = viewPort.find_elements(By.CSS_SELECTOR,'.ng-scope .ngRow')
         cabeceras = []
         #capturamos el nombre de las cabeceras y su posición
         for e in vp_header_items:
             hd_class = e.get_attribute("class")
-            nombre_col = e.text
+            nombre_col = e.text.lower()
             indice_col  = [ x for x in hd_class.split(" ") if "colt" in x[0:4] ][0]
             cabeceras.append({ "nombre": nombre_col, "campo": indice_col })
         #print("cabeceras: %s" % cabeceras)
@@ -68,7 +79,7 @@ def get_items():
             campos = {}
             for c in cabeceras:
                 campos["fila"] = contador
-                n_nombre = c["nombre"].lower()
+                n_nombre = c["nombre"]
                 match n_nombre:
                     case "mostrar id":
                         n_nombre = "Id"
@@ -78,6 +89,8 @@ def get_items():
                         n_nombre = "nombre"
                     case "fecha de última modificación":
                         n_nombre = "fecha_mod"
+                    case "usuario asignado":
+                        n_nombre = "usu_asignado"
                 campos[n_nombre] = e.find_element(By.CSS_SELECTOR, ".ng-scope .{}".format(c["campo"])).text.strip()
             #print("campos: %s" % campos)
             items.append(campos)
@@ -86,6 +99,7 @@ def get_items():
     return items
     
 #comprueba si aparece algún ticket nuevo y devuelve un array
+#se devuelven los que estan en estado asignado pero sin usuario
 def comprobar_tickets():
     '''comprueba si existen nuevos tickets'''
     global last_ids
@@ -93,23 +107,16 @@ def comprobar_tickets():
     #print(items)
     ids = list(map(lambda i: i['Id'], items))
     print("numero de items: %d: %s" % (len(items), list(ids)))
-    new_ids = list(i for i in ids if i not in last_ids) #nuevos identificadores
+    #new_ids = list(i for i in ids if i not in last_ids) #nuevos identificadores
     #nuevos tickets
-    new_tickets = list(x for x in items if x['Id'] in new_ids)
+    #new_tickets = list(x for x in items if x['Id'] in new_ids)
+    #devolvemos los tickets estado="asignado" que no tengan usuario asignado
+    active_tickets = list(x for x in items if (x['estado'] == "Asignado" and x['usu_asignado'] == ""))
     last_ids = ids[:]
-    return new_tickets
+    return active_tickets
 
-# def ver_notif(notif):
-#     '''muestra una notificación'''
-#     img_path = "logo_pass32.ico"
-#     notification.notify(
-#             title = "Nuevos tickets!!",
-#             message = notif,
-#             #we need to download a icon of ico file format
-#             app_icon = img_path,
-#             # the notification stays for 50sec
-#             timeout  = 50
-#     )
+def open_navigator():
+       subprocess.Popen([options.binary_location, main_url])
 
 def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
@@ -146,11 +153,12 @@ def tray_sched(icon, item):
                 print("paramos scheduler")
                 sched.pause()
                 icon.notify(message="estado actual: pausado")
+
         case "solo INSS":
             tickets_solo_inss = not tickets_solo_inss
             print("tickets_solo_inss: %s" % tickets_solo_inss)
             if tickets_solo_inss:
-                icon.notify(message="mostrar tickets INSS")
+                icon.notify(message="mostrar únicamente tickets INSS")
             else:
                 icon.notify(message="mostrar todos tickets")
                 
@@ -184,19 +192,40 @@ def main_loop():
         print("tickets inss(%d): %s" % (nuevos_inss, rel_inss))
         if tickets_solo_inss:
             if nuevos_inss > 0:
-                icon.notify(title='nuevos tickets inss!', message=rel_inss)
+                icon.notify(title='nuevos tickets!', message=rel_inss)
         else:
             icon.notify(title='nuevos tickets!', message=rel)
+            #sched.add_job(main_loop, 'interval', seconds=sta, id='job_id')
+            # if (sched.get_job('ptkMsg_id')): # is not None):
+            #     sched.remove_job('tkMsg_id')
+            #sched.add_job(tkMsg, args=["ultimos tickets", rel], id='tkMsg_id')
     else:
         print("no hay nuevos tickets")
     driver.refresh()
+    #importante ajustar el zoom para que entren todas las columnas
+    driver.execute_script("document.body.style.zoom='20%'")
 
+
+# def tkMsg(title, mesg):
+#     tkroot= tk.Tk()
+#     tkroot.title(title)
+#     tkroot.geometry("200x140")
+#     tkroot.config(bg="blue")
+#     text_area = st.ScrolledText(tkroot, width=60,height=4, bg="blue", fg="white" ,
+#                                 font=("Times New Roman", 14))
+#     text_area.grid(column = 0, pady = 10, padx = 10)
+#     text_area.insert(tk.INSERT, mesg)
+#     text_area.configure(state = 'disabled')
+#     # tk.Label(tkroot, text=mesg, fg="white",
+#     #          bg="blue", font=("Arial", 12, "bold")).pack(pady=15)
+#     #tkroot.protocol("WM_DELETE_WINDOW", tkClose)
+#     tkroot.mainloop()
 
 if __name__ == "__main__":
-    #definimos icono para la bandeja del sistema
-    image = PIL.Image.open(current_dir+"\\logo_pass32.ico")
+    #creamos la imagen desde el codigo base64
+    buffer = io.BytesIO(base64.b64decode(pass_icon))
+    image = PIL.Image.open(buffer)
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
-        #pyItem('parar', tray_sched, checked=lambda item: not sched.running),
         pyItem('parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
         pyItem('solo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
         pyItem('tiempo(seg)', pyMenu( lambda: (
@@ -205,26 +234,28 @@ if __name__ == "__main__":
                 set_state_sched(i),
                 checked=get_state_sched(i),
                 radio=True)
-            for i in [10,30,60,90,120,300]),
+            for i in [30,60,120,300]),
         )),
         pyItem('Salir', tray_quit)
     ))
 
+
     #abrimos ventana url principal
     options = get_default_options()
     serv = service.Service(current_dir + '\\msedgedriver.exe')
-    #service = webdriver.EdgeService(log_output="edgedriver.log")
     driver = webdriver.Edge(options=options, service=serv)
-    driver.implicitly_wait(10) #tiempo de espera implicito
+    #driver = webdriver.Edge(options=options)
+    driver.implicitly_wait(15) #tiempo de espera implicito
     driver.get(main_url)
+    #cambiamos el zoom para que entren todas las columnas en el viewport
+    driver.execute_script("document.body.style.zoom='20%'")
 
     print("titulo ventana principal: %s" % driver.title)
-    #driver.execute_script("window.open('{}');".format(main_url))
+    main_loop() #primera ejecución al arrancar
+
     #arrancamos la cola
     sched = BackgroundScheduler()
     start_scheduler(sched_seconds)
 
-    #run_program = True
     #arranca el loop principal
     icon.run()
-    #sys.exit(0)
