@@ -2,7 +2,7 @@
 # crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
 #python -m PyInstaller --onefile --noconsole passcontrol.py
 import os, sys, subprocess, io, base64
-# import tkinter as tk
+#import tkinter as tk
 # import tkinter.scrolledtext as st
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -22,6 +22,8 @@ last_ids = list() #se guardan los ids de los tickets anteriores
 sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
 tickets_solo_inss = True
+sched = BackgroundScheduler() #cola de procesos
+estadisticas = []
 
 def get_default_options():
     '''activa las opciones por defecto'''
@@ -96,8 +98,38 @@ def get_items():
             items.append(campos)
     except Exception as ex:
         print("excepcion en get_items: %s" % type(ex))
+    get_estadisticas(items)
     return items
-    
+
+def get_estadisticas(items):
+    global estadisticas
+    '''carga la tabla estadisticas con los datos actuales'''
+    dict_estadist = {}
+    # items = get_items()
+    dist_estados = set() #un conjunto no permite repetir items
+    for i in items:
+        #comprobamos si existe la empresa
+        empr = i['empresa']
+        estado = i['estado']
+        dist_estados.add(estado)
+        if empr not in dict_estadist.keys():
+            dict_estadist[empr] = {}
+            dict_estadist[empr][estado] = 1
+        else:
+            if estado not in dict_estadist[empr].keys():
+                dict_estadist[empr][estado] = 1
+            else:
+                dict_estadist[empr][estado] = dict_estadist[empr][estado] + 1
+    print("estadisticas: %s" % dict_estadist)
+    estadisticas=[]
+    for k,v in dict_estadist.items():
+        tx_est = "{0:5s} - ".format(k)
+        for k,v in v.items():
+            tx_est += "{0:9s}:{1:3d}\t".format(k, v)
+            estadisticas.append(tx_est)
+
+
+
 #comprueba si aparece algún ticket nuevo y devuelve un array
 #se devuelven los que estan en estado asignado pero sin usuario
 def comprobar_tickets():
@@ -116,7 +148,7 @@ def comprobar_tickets():
     return active_tickets
 
 def open_navigator():
-       subprocess.Popen([options.binary_location, main_url])
+    subprocess.Popen([options.binary_location, main_url])
 
 def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
@@ -145,7 +177,7 @@ def tray_sched(icon, item):
     match item.text:
         case "parar":
             print("sched state: %s" % sched.state)
-            if( sched.state != sched_base.STATE_RUNNING ):
+            if sched.state != sched_base.STATE_RUNNING:
                 print("arrancamos job")
                 sched.resume()
                 icon.notify(message="estado actual: funcionando")
@@ -161,7 +193,23 @@ def tray_sched(icon, item):
                 icon.notify(message="mostrar únicamente tickets INSS")
             else:
                 icon.notify(message="mostrar todos tickets")
-                
+        
+        case "estadísticas":
+            print("icon:%s" % icon)
+            print("item:%s" % item)
+            
+            msg = "INSS - pendiente:3"
+            return msg
+            
+             
+# def tray_stat():
+#     tray_items = []
+#     it = get_estadisticas()
+#     it_keys = it.keys()
+#     for i in it_keys:
+#         pt = pyItem(text="{}: {}".format(i, it[i]), action=None)
+#         tray_items.append(pt)
+#     return tray_items
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
@@ -175,6 +223,10 @@ def tray_quit(icon):
 #bucle principal
 def main_loop():
     '''se encarga de comprobar regularmente si hay que notificar nuevos tickets'''
+    driver.refresh()
+    #importante ajustar el zoom para que entren todas las columnas
+    driver.execute_script("document.body.style.zoom='20%'")
+
     nuevos = comprobar_tickets()
     def ticket_formato(tit, mess):
         return "{}: {}\n".format(tit, mess)
@@ -201,9 +253,9 @@ def main_loop():
             #sched.add_job(tkMsg, args=["ultimos tickets", rel], id='tkMsg_id')
     else:
         print("no hay nuevos tickets")
-    driver.refresh()
-    #importante ajustar el zoom para que entren todas las columnas
-    driver.execute_script("document.body.style.zoom='20%'")
+    # driver.refresh()
+    # #importante ajustar el zoom para que entren todas las columnas
+    # driver.execute_script("document.body.style.zoom='20%'")
 
 def check_run_program():
     '''comprobar si el programa esta corriendo'''
@@ -214,20 +266,6 @@ def check_run_program():
     print("instancias: %d" % n_instancias)
     return n_instancias > 2
 
-# def tkMsg(title, mesg):
-#     tkroot= tk.Tk()
-#     tkroot.title(title)
-#     tkroot.geometry("200x140")
-#     tkroot.config(bg="blue")
-#     text_area = st.ScrolledText(tkroot, width=60,height=4, bg="blue", fg="white" ,
-#                                 font=("Times New Roman", 14))
-#     text_area.grid(column = 0, pady = 10, padx = 10)
-#     text_area.insert(tk.INSERT, mesg)
-#     text_area.configure(state = 'disabled')
-#     # tk.Label(tkroot, text=mesg, fg="white",
-#     #          bg="blue", font=("Arial", 12, "bold")).pack(pady=15)
-#     #tkroot.protocol("WM_DELETE_WINDOW", tkClose)
-#     tkroot.mainloop()
 
 if __name__ == "__main__":
     #comprobamos si el programa ya está corriendo
@@ -237,9 +275,14 @@ if __name__ == "__main__":
     #creamos la imagen desde el codigo base64
     buffer = io.BytesIO(base64.b64decode(pass_icon))
     image = PIL.Image.open(buffer)
+
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
         pyItem('parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
         pyItem('solo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
+        pyItem('ver Estadísticas', pyMenu( lambda: (
+            pyItem( '%s' % e, action=None)
+            for e in estadisticas),  
+        )),
         pyItem('tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
@@ -251,7 +294,6 @@ if __name__ == "__main__":
         pyItem('Salir', tray_quit)
     ))
 
-
     #abrimos ventana url principal
     options = get_default_options()
     serv = service.Service(current_dir + '\\msedgedriver.exe')
@@ -260,13 +302,14 @@ if __name__ == "__main__":
     driver.implicitly_wait(15) #tiempo de espera implicito
     driver.get(main_url)
     #cambiamos el zoom para que entren todas las columnas en el viewport
-    driver.execute_script("document.body.style.zoom='20%'")
+    #driver.execute_script("document.body.style.zoom='20%'")
 
     print("titulo ventana principal: %s" % driver.title)
     main_loop() #primera ejecución al arrancar
+    #act_estadisticas()
 
     #arrancamos la cola
-    sched = BackgroundScheduler()
+    #sched = BackgroundScheduler()
     start_scheduler(sched_seconds)
 
     #arranca el loop principal
