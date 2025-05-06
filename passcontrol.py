@@ -1,9 +1,7 @@
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
-#python -m PyInstaller --onefile --noconsole passcontrol.py
+#python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
 import os, sys, subprocess, io, base64
-#import tkinter as tk
-# import tkinter.scrolledtext as st
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -12,7 +10,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.edge import service
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers import base as sched_base
-#from plyer import notification
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
 from passIcon import pass_icon
@@ -23,7 +20,7 @@ sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
 tickets_solo_inss = True
 sched = BackgroundScheduler() #cola de procesos
-estadisticas = []
+estadisticas = [] #distintos estados por empresa
 
 def get_default_options():
     '''activa las opciones por defecto'''
@@ -102,8 +99,8 @@ def get_items():
     return items
 
 def get_estadisticas(items):
-    global estadisticas
     '''carga la tabla estadisticas con los datos actuales'''
+    global estadisticas
     dict_estadist = {}
     # items = get_items()
     dist_estados = set() #un conjunto no permite repetir items
@@ -122,11 +119,12 @@ def get_estadisticas(items):
                 dict_estadist[empr][estado] = dict_estadist[empr][estado] + 1
     print("estadisticas: %s" % dict_estadist)
     estadisticas=[]
-    for k,v in dict_estadist.items():
-        tx_est = "{0:5s} - ".format(k)
-        for k,v in v.items():
-            tx_est += "{0:9s}:{1:3d}\t".format(k, v)
-            estadisticas.append(tx_est)
+    for kit,vit in dict_estadist.items():
+        tx_est = "{0:5s} - ".format(kit)
+        for k,v in vit.items():
+            tx_est += "{0:4s}:{1:2d} ".format(k[0:4], v)
+        estadisticas.append(tx_est)
+        print('est lineas: %s' % estadisticas)
 
 
 
@@ -163,7 +161,7 @@ def set_state_sched(sta):
         print("sched_seconds: %d" % sta)
         sched.remove_job('job_id')
         sched.add_job(main_loop, 'interval', seconds=sta, id='job_id')
-        icon.notify(title='cambiado intervalo', message="nuevo valor: {} seg".format(sched_seconds))
+        icon.notify(title='Cambiado intervalo', message="nuevo valor: {} seg".format(sched_seconds))
     return inner
 
 def get_state_sched(sta):
@@ -175,41 +173,24 @@ def tray_sched(icon, item):
     global tickets_solo_inss
     print("tray_item: (%s)" % item)
     match item.text:
-        case "parar":
+        case "Parar":
             print("sched state: %s" % sched.state)
             if sched.state != sched_base.STATE_RUNNING:
                 print("arrancamos job")
                 sched.resume()
-                icon.notify(message="estado actual: funcionando")
+                icon.notify(message="Estado actual: Funcionando")
             else:
                 print("paramos scheduler")
                 sched.pause()
-                icon.notify(message="estado actual: pausado")
+                icon.notify(message="Estado actual: Pausado")
 
-        case "solo INSS":
+        case "Sólo INSS":
             tickets_solo_inss = not tickets_solo_inss
             print("tickets_solo_inss: %s" % tickets_solo_inss)
             if tickets_solo_inss:
-                icon.notify(message="mostrar únicamente tickets INSS")
+                icon.notify(message="Mostrar únicamente tickets INSS")
             else:
-                icon.notify(message="mostrar todos tickets")
-        
-        case "estadísticas":
-            print("icon:%s" % icon)
-            print("item:%s" % item)
-            
-            msg = "INSS - pendiente:3"
-            return msg
-            
-             
-# def tray_stat():
-#     tray_items = []
-#     it = get_estadisticas()
-#     it_keys = it.keys()
-#     for i in it_keys:
-#         pt = pyItem(text="{}: {}".format(i, it[i]), action=None)
-#         tray_items.append(pt)
-#     return tray_items
+                icon.notify(message="Mostrar todos tickets")
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
@@ -225,7 +206,7 @@ def main_loop():
     '''se encarga de comprobar regularmente si hay que notificar nuevos tickets'''
     driver.refresh()
     #importante ajustar el zoom para que entren todas las columnas
-    driver.execute_script("document.body.style.zoom='20%'")
+    driver.execute_script("document.body.style.zoom='10%'")
 
     nuevos = comprobar_tickets()
     def ticket_formato(tit, mess):
@@ -244,9 +225,9 @@ def main_loop():
         print("tickets inss(%d): %s" % (nuevos_inss, rel_inss))
         if tickets_solo_inss:
             if nuevos_inss > 0:
-                icon.notify(title='nuevos tickets!', message=rel_inss)
+                icon.notify(title='Nuevos tickets!', message=rel_inss)
         else:
-            icon.notify(title='nuevos tickets!', message=rel)
+            icon.notify(title='Nuevos tickets!', message=rel)
             #sched.add_job(main_loop, 'interval', seconds=sta, id='job_id')
             # if (sched.get_job('ptkMsg_id')): # is not None):
             #     sched.remove_job('tkMsg_id')
@@ -277,13 +258,13 @@ if __name__ == "__main__":
     image = PIL.Image.open(buffer)
 
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
-        pyItem('parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
-        pyItem('solo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
-        pyItem('ver Estadísticas', pyMenu( lambda: (
+        pyItem('Parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
+        pyItem('Sólo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
+        pyItem('Estadísticas', pyMenu( lambda: (
             pyItem( '%s' % e, action=None)
             for e in estadisticas),  
         )),
-        pyItem('tiempo(seg)', pyMenu( lambda: (
+        pyItem('Tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
                 set_state_sched(i),
