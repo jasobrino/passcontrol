@@ -1,7 +1,9 @@
+'''análisis de registros en la aplicación pass gestión y notificación de tickets'''
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
 #python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
 import os, sys, subprocess, io, base64
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -119,12 +121,15 @@ def get_estadisticas(items):
                 dict_estadist[empr][estado] = dict_estadist[empr][estado] + 1
     print("estadisticas: %s" % dict_estadist)
     estadisticas=[]
+    hora = datetime.now()
+    estadisticas.append("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
     for kit,vit in dict_estadist.items():
         tx_est = "{0:5s} - ".format(kit)
         for k,v in vit.items():
             tx_est += "{0:4s}:{1:2d} ".format(k[0:4], v)
         estadisticas.append(tx_est)
         print('est lineas: %s' % estadisticas)
+    icon.update_menu() #actualizamos el menu con los nuevos items
 
 
 
@@ -152,7 +157,7 @@ def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
     sched.add_job(main_loop, 'interval', seconds=seconds, id='job_id')
     sched.start()
- 
+
 # funciones para tray icon
 def set_state_sched(sta):
     def inner(icon, item):
@@ -247,6 +252,9 @@ def check_run_program():
     print("instancias: %d" % n_instancias)
     return n_instancias > 2
 
+def gen_stat_items():
+    return  (pyItem( '%s' % e, action=None)
+            for e in estadisticas)
 
 if __name__ == "__main__":
     #comprobamos si el programa ya está corriendo
@@ -260,10 +268,11 @@ if __name__ == "__main__":
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
         pyItem('Parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
         pyItem('Sólo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
-        pyItem('Estadísticas', pyMenu( lambda: (
-            pyItem( '%s' % e, action=None)
-            for e in estadisticas),  
-        )),
+        # pyItem('Estadísticas', pyMenu( lambda: (
+        #     pyItem( '%s' % e, action=None)
+        #     for e in estadisticas),
+        # )),
+        pyItem('Estadísticas', pyMenu(gen_stat_items)),
         pyItem('Tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
