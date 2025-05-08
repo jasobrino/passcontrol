@@ -1,7 +1,7 @@
 '''análisis de registros en la aplicación pass gestión y notificación de tickets'''
 # instalar requerimientos: pip install -r requirements.txt
-# crear exe en carpeta dist: pyinstaller --hide-console hide-late --onefile .\passcontrol.py
-#python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
+# crear exe en carpeta dist:
+  # python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
 import os, sys, subprocess, io, base64
 from datetime import datetime
 from selenium import webdriver
@@ -14,6 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers import base as sched_base
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
+import psutil
 from passIcon import pass_icon
 
 main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
@@ -122,7 +123,8 @@ def get_estadisticas(items):
     print("estadisticas: %s" % dict_estadist)
     estadisticas=[]
     hora = datetime.now()
-    estadisticas.append("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
+    #estadisticas.append("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
+    print("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
     for kit,vit in dict_estadist.items():
         tx_est = "{0:5s} - ".format(kit)
         for k,v in vit.items():
@@ -202,7 +204,8 @@ def tray_quit(icon):
     if sched.running:
         print("quit: paramos scheduler")
         sched.shutdown()
-    driver.close()
+    #driver.close()
+    driver.quit() #preferible para liberar todos los recursos
     icon.stop()
 
 
@@ -228,29 +231,28 @@ def main_loop():
                 nuevos_inss += 1
                 rel_inss += ticket_formato(nt['Id'], nt['remitente'])
         print("tickets inss(%d): %s" % (nuevos_inss, rel_inss))
-        if tickets_solo_inss:
-            if nuevos_inss > 0:
-                icon.notify(title='Nuevos tickets!', message=rel_inss)
-        else:
-            icon.notify(title='Nuevos tickets!', message=rel)
-            #sched.add_job(main_loop, 'interval', seconds=sta, id='job_id')
-            # if (sched.get_job('ptkMsg_id')): # is not None):
-            #     sched.remove_job('tkMsg_id')
-            #sched.add_job(tkMsg, args=["ultimos tickets", rel], id='tkMsg_id')
+        #antes de notificar comprobamos que no estemos en la pantalla de bloqueo
+        if check_process("LogonUI.exe") > 0:
+            print("pantalla bloqueo detectada")
+        else: #mostramos las notificaciones
+            if tickets_solo_inss:
+                if nuevos_inss > 0:
+                    icon.notify(title='Nuevos tickets!', message=rel_inss)
+            else:
+                icon.notify(title='Nuevos tickets!', message=rel)
     else:
         print("no hay nuevos tickets")
     # driver.refresh()
     # #importante ajustar el zoom para que entren todas las columnas
     # driver.execute_script("document.body.style.zoom='20%'")
 
-def check_run_program():
-    '''comprobar si el programa esta corriendo'''
-    progs= [line.split() for line in subprocess.check_output("tasklist").splitlines()]
-    #eliminar las lineas de cabecera
-    cab=[progs.pop(e) for e in [0,1,2]]
-    n_instancias = len([ x[0] for x in progs if x[0] == b'passcontrol.exe' ])
-    print("instancias: %d" % n_instancias)
-    return n_instancias > 2
+def check_process(nomproc):
+    '''devolver el numero de instancias del proceso indicado'''
+    count = 0
+    for proc in psutil.process_iter():
+        if proc.name() == nomproc:
+            count += 1
+    return count
 
 def gen_stat_items():
     return  (pyItem( '%s' % e, action=None)
@@ -258,7 +260,9 @@ def gen_stat_items():
 
 if __name__ == "__main__":
     #comprobamos si el programa ya está corriendo
-    if check_run_program():
+    print("instancias de passcontrol: %d" % check_process("passcontrol.exe"))
+    #if check_run_program():
+    if check_process("passcontrol.exe") > 2:
         print("passcontrol ya está ejecutándose")
         sys.exit(0)
     #creamos la imagen desde el codigo base64
