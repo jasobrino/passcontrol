@@ -2,7 +2,7 @@
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist:
   # python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
-import os, sys, subprocess, io, base64
+import os, sys, subprocess, io, base64, json
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -24,6 +24,7 @@ current_dir = os.getcwd() #directorio actual
 tickets_solo_inss = True
 sched = BackgroundScheduler() #cola de procesos
 estadisticas = [] #distintos estados por empresa
+jsonFile = "C:/temp/passcontrol.json" #archivo para guardar los settings del usuario
 
 def get_default_options():
     '''activa las opciones por defecto'''
@@ -169,6 +170,7 @@ def set_state_sched(sta):
         sched.remove_job('job_id')
         sched.add_job(main_loop, 'interval', seconds=sta, id='job_id')
         icon.notify(title='Cambiado intervalo', message="nuevo valor: {} seg".format(sched_seconds))
+        save_json() #guardamos los datos en el archivo json
     return inner
 
 def get_state_sched(sta):
@@ -198,6 +200,7 @@ def tray_sched(icon, item):
                 icon.notify(message="Mostrar únicamente tickets INSS")
             else:
                 icon.notify(message="Mostrar todos tickets")
+            save_json() #guardamos los cambios en el archivo json
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
@@ -208,6 +211,25 @@ def tray_quit(icon):
     driver.quit() #preferible para liberar todos los recursos
     icon.stop()
 
+def load_json():
+    '''recuperamos el contenido de passcontrol.json'''
+    global tickets_solo_inss, sched_seconds
+    #si existe el archivo json leemos su contenido
+    if os.path.exists(jsonFile):
+        print("leer passcontrol.json")
+        with open(jsonFile, "r", encoding='utf-8') as f:
+            campos = json.loads(f.readline())
+            tickets_solo_inss = campos['solo_INSS']
+            sched_seconds = campos['intervalo']
+            f.close()
+
+def save_json():
+    '''guardamos los valores actuales en el archivo passcontrol.json'''
+    json_data = {'solo_INSS':tickets_solo_inss, 'intervalo': sched_seconds}
+    with open (jsonFile, "w", encoding='utf-8') as f:
+        f.write(json.dumps(json_data))
+        f.close()
+    print("datos guardados: %s" % json_data)
 
 #bucle principal
 def main_loop():
@@ -261,6 +283,8 @@ def gen_stat_items():
 if __name__ == "__main__":
     #comprobamos si el programa ya está corriendo
     print("instancias de passcontrol: %d" % check_process("passcontrol.exe"))
+    #cargamos los datos de usuario del archivo json
+    load_json()
     #if check_run_program():
     if check_process("passcontrol.exe") > 2:
         print("passcontrol ya está ejecutándose")
