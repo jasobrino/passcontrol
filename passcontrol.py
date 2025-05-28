@@ -1,8 +1,8 @@
 '''análisis de registros en la aplicación pass gestión y notificación de tickets'''
 # instalar requerimientos: pip install -r requirements.txt
 # crear exe en carpeta dist:
-  # python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
-import os, sys, subprocess, io, base64, json
+# python -m PyInstaller --onefile --noconsole passcontrol.py --version-file versionfile.txt
+import os, sys, io, base64, json
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -15,9 +15,10 @@ from apscheduler.schedulers import base as sched_base
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
 import psutil
-from passIcon import pass_icon
+from comun import pass_icon, main_url
+from abrir_edge import abrir_edge
 
-main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
+#main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
 sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
@@ -106,13 +107,17 @@ def get_estadisticas(items):
     '''carga la tabla estadisticas con los datos actuales'''
     global estadisticas
     dict_estadist = {}
-    # items = get_items()
-    dist_estados = set() #un conjunto no permite repetir items
+    estadisticas=[]
+    #comprobamos si no hay incidencias
+    if len(items) == 0:
+        estadisticas.append("sin incidencias")
+        icon.update_menu()
+        return
+    
     for i in items:
         #comprobamos si existe la empresa
         empr = i['empresa']
         estado = i['estado']
-        dist_estados.add(estado)
         if empr not in dict_estadist.keys():
             dict_estadist[empr] = {}
             dict_estadist[empr][estado] = 1
@@ -120,18 +125,16 @@ def get_estadisticas(items):
             if estado not in dict_estadist[empr].keys():
                 dict_estadist[empr][estado] = 1
             else:
-                dict_estadist[empr][estado] = dict_estadist[empr][estado] + 1
+                dict_estadist[empr][estado] += 1 #incrementamos si la key existe
     print("estadisticas: %s" % dict_estadist)
-    estadisticas=[]
+
     hora = datetime.now()
-    #estadisticas.append("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
-    print("Ult. comprobación: {}:{}:{}".format(hora.hour, hora.minute, hora.second))
+    print("Ult. comprobación: {0}:{1:02}:{2:02}".format(hora.hour, hora.minute, hora.second))
     for kit,vit in dict_estadist.items():
         tx_est = "{0:5s} - ".format(kit)
         for k,v in vit.items():
             tx_est += "{0:4s}:{1:2d} ".format(k[0:4], v)
         estadisticas.append(tx_est)
-        print('est lineas: %s' % estadisticas)
     icon.update_menu() #actualizamos el menu con los nuevos items
 
 
@@ -153,8 +156,8 @@ def comprobar_tickets():
     last_ids = ids[:]
     return active_tickets
 
-def open_navigator():
-    subprocess.Popen([options.binary_location, main_url])
+# def open_navigator():
+#     subprocess.Popen([options.binary_location, main_url])
 
 def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
@@ -201,6 +204,9 @@ def tray_sched(icon, item):
             else:
                 icon.notify(message="Mostrar todos tickets")
             save_json() #guardamos los cambios en el archivo json
+        
+        case 'Abrir navegador Edge':
+            abrir_edge(options.binary_location)
 
 def tray_quit(icon):
     '''paramos la cola, el driver de edge y cerramos el icono de systray'''
@@ -276,9 +282,6 @@ def check_process(nomproc):
             count += 1
     return count
 
-def gen_stat_items():
-    return  (pyItem( '%s' % e, action=None)
-            for e in estadisticas)
 
 if __name__ == "__main__":
     #comprobamos si el programa ya está corriendo
@@ -294,13 +297,13 @@ if __name__ == "__main__":
     image = PIL.Image.open(buffer)
 
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
+        pyItem('Abrir navegador Edge', tray_sched),
         pyItem('Parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
         pyItem('Sólo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
-        # pyItem('Estadísticas', pyMenu( lambda: (
-        #     pyItem( '%s' % e, action=None)
-        #     for e in estadisticas),
-        # )),
-        pyItem('Estadísticas', pyMenu(gen_stat_items)),
+        pyItem('Estadísticas', pyMenu( lambda: (
+            pyItem( '%s' % e, action=None)
+            for e in estadisticas),
+        )),
         pyItem('Tiempo(seg)', pyMenu( lambda: (
             pyItem(
                 '%d' % i,
@@ -321,7 +324,7 @@ if __name__ == "__main__":
     driver.get(main_url)
     #cambiamos el zoom para que entren todas las columnas en el viewport
     #driver.execute_script("document.body.style.zoom='20%'")
-
+    driver.execute_script('document.title = "pass_background_control"')
     print("titulo ventana principal: %s" % driver.title)
     main_loop() #primera ejecución al arrancar
     #act_estadisticas()
