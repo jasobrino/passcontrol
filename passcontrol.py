@@ -15,16 +15,16 @@ from apscheduler.schedulers import base as sched_base
 from pystray import Icon as pyIcon, Menu as pyMenu, MenuItem as pyItem
 import PIL.Image
 import psutil
-from comun import pass_icon, main_url
+from comun import pass_icon, main_url, lista_ambitos
 from abrir_edge import abrir_edge
 
 #main_url = 'https://segsocial-smartit.onbmc.com/smartit/app/#/ticket-console'
 last_ids = list() #se guardan los ids de los tickets anteriores
 sched_seconds = 60 #intervalo scheduler
 current_dir = os.getcwd() #directorio actual
-tickets_solo_inss = True
 sched = BackgroundScheduler() #cola de procesos
 estadisticas = [] #distintos estados por empresa
+ambito = [] #relación de ambitos
 jsonFile = "C:/temp/passcontrol.json" #archivo para guardar los settings del usuario
 
 def get_default_options():
@@ -113,7 +113,7 @@ def get_estadisticas(items):
         estadisticas.append("sin incidencias")
         icon.update_menu()
         return
-    
+
     for i in items:
         #comprobamos si existe la empresa
         empr = i['empresa']
@@ -145,19 +145,11 @@ def comprobar_tickets():
     '''comprueba si existen nuevos tickets'''
     global last_ids
     items = get_items()
-    #print(items)
     ids = list(map(lambda i: i['Id'], items))
     print("numero de items: %d: %s" % (len(items), list(ids)))
-    #new_ids = list(i for i in ids if i not in last_ids) #nuevos identificadores
-    #nuevos tickets
-    #new_tickets = list(x for x in items if x['Id'] in new_ids)
-    #devolvemos los tickets estado="asignado" que no tengan usuario asignado
     active_tickets = list(x for x in items if (x['estado'] == "Asignado" and x['usu_asignado'] == ""))
     last_ids = ids[:]
     return active_tickets
-
-# def open_navigator():
-#     subprocess.Popen([options.binary_location, main_url])
 
 def start_scheduler(seconds):
     '''arranca el scheduler con el intervalo indicado'''
@@ -181,8 +173,26 @@ def get_state_sched(sta):
         return sched_seconds == sta
     return inner
 
+def set_ambito(amb):
+    def inner(icon, item):
+        #global ambito
+        if amb not in ambito:
+            ambito.append(amb)
+        else:
+            ambito.remove(amb)
+        save_json()
+        print(f"set_ambito: {ambito}")
+        icon.notify(title='Ambito actualizado', message="Ambito: {}".format(ambito))
+    return inner
+
+def get_ambito(amb):
+    def inner(item):
+        return amb in ambito
+    return inner
+
+
 def tray_sched(icon, item):
-    global tickets_solo_inss
+    # global tickets_solo_inss
     print("tray_item: (%s)" % item)
     match item.text:
         case "Parar":
@@ -195,16 +205,6 @@ def tray_sched(icon, item):
                 print("paramos scheduler")
                 sched.pause()
                 icon.notify(message="Estado actual: Pausado")
-
-        case "Sólo INSS":
-            tickets_solo_inss = not tickets_solo_inss
-            print("tickets_solo_inss: %s" % tickets_solo_inss)
-            if tickets_solo_inss:
-                icon.notify(message="Mostrar únicamente tickets INSS")
-            else:
-                icon.notify(message="Mostrar todos tickets")
-            save_json() #guardamos los cambios en el archivo json
-        
         case 'Abrir navegador Edge':
             abrir_edge(options.binary_location)
 
@@ -217,21 +217,23 @@ def tray_quit(icon):
     driver.quit() #preferible para liberar todos los recursos
     icon.stop()
 
+#gestión archivo json
 def load_json():
     '''recuperamos el contenido de passcontrol.json'''
-    global tickets_solo_inss, sched_seconds
+    global sched_seconds, ambito
     #si existe el archivo json leemos su contenido
     if os.path.exists(jsonFile):
         print("leer passcontrol.json")
         with open(jsonFile, "r", encoding='utf-8') as f:
             campos = json.loads(f.readline())
-            tickets_solo_inss = campos['solo_INSS']
+            #tickets_solo_inss = campos['solo_INSS']
             sched_seconds = campos['intervalo']
+            ambito = campos['ambito']
             f.close()
 
 def save_json():
     '''guardamos los valores actuales en el archivo passcontrol.json'''
-    json_data = {'solo_INSS':tickets_solo_inss, 'intervalo': sched_seconds}
+    json_data = {'intervalo': sched_seconds, 'ambito': ambito}
     with open (jsonFile, "w", encoding='utf-8') as f:
         f.write(json.dumps(json_data))
         f.close()
@@ -240,34 +242,33 @@ def save_json():
 #bucle principal
 def main_loop():
     '''se encarga de comprobar regularmente si hay que notificar nuevos tickets'''
+    if len(ambito) == 0:
+        icon.notify(title='Aviso', message="No se monstrará ningún ticket, seleccione al menos un ámbito")
+        
     driver.refresh()
     #importante ajustar el zoom para que entren todas las columnas
     driver.execute_script("document.body.style.zoom='10%'")
 
-    nuevos = comprobar_tickets()
+    tickets_asignados = comprobar_tickets()
     def ticket_formato(tit, mess):
         return "{}: {}\n".format(tit, mess)
-    if len(nuevos) > 0:
-        print("tickets nuevos: %s" % list(map(lambda i: i['Id'], nuevos)))
+    if len(tickets_asignados) > 0:
+        print("tickets asignados: %s" % list(map(lambda i: i['Id'], tickets_asignados)))
         rel = ""
-        rel_inss = ""
-        nuevos_inss = 0
-        for nt in nuevos:
-            rel += ticket_formato(nt['Id'], nt['remitente'])
-            #comprobamos si pertenece al inss
-            if (nt["empresa"] in ["INSS","GISS"]) or (nt["empresa"]=="SJSS" and nt["remitente"][2:3] == 'I'):
-                nuevos_inss += 1
-                rel_inss += ticket_formato(nt['Id'], nt['remitente'])
-        print("tickets inss(%d): %s" % (nuevos_inss, rel_inss))
-        #antes de notificar comprobamos que no estemos en la pantalla de bloqueo
+        tickets_filtrados = 0
+        for nt in tickets_asignados:
+            ambito_usuario = "INSS" if nt["remitente"][2:3] == 'I' else None
+            ambito_usuario = "TGSS" if nt["remitente"][2:3] == 'T' else None      
+            if(nt["empresa"] in ambito) or (nt["empresa"] == "SJSS" and ambito_usuario in ambito):
+                tickets_filtrados += 1
+                rel += ticket_formato(nt['Id'], nt['remitente'])
+            print(f"tickets_filtrados: {tickets_filtrados} {rel}")
+
+        #antes de notificar comprobamos que no estemos en la pantalla de bloqueo    
         if check_process("LogonUI.exe") > 0:
             print("pantalla bloqueo detectada")
         else: #mostramos las notificaciones
-            if tickets_solo_inss:
-                if nuevos_inss > 0:
-                    icon.notify(title='Nuevos tickets!', message=rel_inss)
-            else:
-                icon.notify(title='Nuevos tickets!', message=rel)
+            icon.notify(title='Nuevos tickets!', message=rel)
     else:
         print("no hay nuevos tickets")
     # driver.refresh()
@@ -288,7 +289,6 @@ if __name__ == "__main__":
     print("instancias de passcontrol: %d" % check_process("passcontrol.exe"))
     #cargamos los datos de usuario del archivo json
     load_json()
-    #if check_run_program():
     if check_process("passcontrol.exe") > 2:
         print("passcontrol ya está ejecutándose")
         sys.exit(0)
@@ -299,14 +299,20 @@ if __name__ == "__main__":
     icon = pyIcon('pass menu', image, 'passControl', menu=pyMenu(
         pyItem('Abrir navegador Edge', tray_sched),
         pyItem('Parar', tray_sched, checked=lambda item: sched.state != sched_base.STATE_RUNNING),
-        pyItem('Sólo INSS', tray_sched, checked=lambda item: tickets_solo_inss),
+        pyItem('Ambito', pyMenu( lambda: (
+            pyItem(
+                text = '%s' % i,
+                action = set_ambito(i), # lambda i: ambito.append(i) if i not in ambito else ambito.remove(i),
+                checked = get_ambito(i))
+            for i in lista_ambitos)
+        )),
         pyItem('Estadísticas', pyMenu( lambda: (
             pyItem( '%s' % e, action=None)
             for e in estadisticas),
         )),
         pyItem('Tiempo(seg)', pyMenu( lambda: (
             pyItem(
-                '%d' % i,
+                '%s' % i,
                 set_state_sched(i),
                 checked=get_state_sched(i),
                 radio=True)
@@ -314,12 +320,16 @@ if __name__ == "__main__":
         )),
         pyItem('Salir', tray_quit)
     ))
-
+    
     #abrimos ventana url principal
-    options = get_default_options()
     serv = service.Service(current_dir + '\\msedgedriver.exe')
+    options = get_default_options()
     driver = webdriver.Edge(options=options, service=serv)
+    #import edgedriver_autoinstaller
+    #edgedriver_autoinstaller.install() #instala el driver de edge si no existe
+    #options.executable_path = "msedgedriver.exe"
     #driver = webdriver.Edge(options=options)
+
     driver.implicitly_wait(15) #tiempo de espera implicito
     driver.get(main_url)
     #cambiamos el zoom para que entren todas las columnas en el viewport
@@ -327,10 +337,8 @@ if __name__ == "__main__":
     driver.execute_script('document.title = "pass_background_control"')
     print("titulo ventana principal: %s" % driver.title)
     main_loop() #primera ejecución al arrancar
-    #act_estadisticas()
 
     #arrancamos la cola
-    #sched = BackgroundScheduler()
     start_scheduler(sched_seconds)
 
     #arranca el loop principal

@@ -2,7 +2,7 @@ import pyinstaller_versionfile
 
 pyinstaller_versionfile.create_versionfile(
     output_file="versionfile.txt",
-    version="1.5.5.0",
+    version="1.6.0.0",
     company_name="INSS",
     file_description="passControl",
     internal_name="passControl",
